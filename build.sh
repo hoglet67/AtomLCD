@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Set the BEEBASM executable for the platform
+BEEBASM=tools/beebasm/beebasm.exe
+if [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+    BEEBASM=tools/beebasm/beebasm
+fi
+
+# Assember the ROM
+$BEEBASM -i src/atomlcd.asm -v >& ATOMLCD.log
+
+ls -l ATOMLCD*
