@@ -1,7 +1,12 @@
+ORIGIN        = $A000
+LEN           = $1000
+        
 IRQ1V         = $0204
 WRCVEC        = &0208
+RDCVEC        = &020A
 
 WRCH          = &FE52
+
 
 LCD_CTRL      = &B404
 LCD_DATA      = &B405
@@ -17,13 +22,13 @@ ViaT1CounterH = ViaBase + 5
 ViaACR        = ViaBase + 11
 ViaIER        = ViaBase + 14
 
-org &A000 - 22
+org ORIGIN - 22
 
     EQUS "ATOMLCD"
     EQUB 0,0,0,0,0,0,0,0,0
-    EQUW &A000
-    EQUW &A000
-    EQUW &1000
+    EQUW ORIGIN
+    EQUW ORIGIN
+    EQUW LEN
 
 .init
     ;; LINK #A000 to be interrupt driven
@@ -36,8 +41,13 @@ org &A000 - 22
     STA WRCVEC
     LDA #>oswrch
     STA WRCVEC + 1
-    JMP reset_display
-
+    LDA #<osrdch
+    STA RDCVEC
+    LDA #>osrdch
+    STA RDCVEC + 1
+    JSR reset_display
+    JMP update
+        
 .init_via
     LDA #<via_isr           ; Setup the interrupt handler
     STA IRQ1V
@@ -66,7 +76,7 @@ org &A000 - 22
     RTS
 
 .init_data
-    EQUB &02
+    EQUB &01
     EQUB &06
     EQUB &0F
     EQUB &38
@@ -78,7 +88,104 @@ org &A000 - 22
     PLA                     ; the Atom OS stacks A
     RTI                     ; return from interrupt
 
+
+
+.osrdch
+
+    PHP                   ;    Save flags
+    CLD                   ;
+    STX &E4               ;    Save X register
+    STY &E5               ;    Save Y register
+                          ;
+                          ;                WAIT FOR KEYBOARD TO BE RELEASED
+                          ;
+.LFE9A                    ;
+    BIT &B002             ;    Is <REPT> key pressed ?
+    BVC LFEA4             ;    ..yes, no need to wait for keyboard to
+                          ;     be released
+    JSR &FE71             ;    Scan keyboard
+    BCC LFE9A             ;    ..wait for key to be released
+                          ;
+                          ;                GET KEYPRESS
+                          ;
+.LFEA4                    ;
+    JSR &FB8A             ;    Wait 0.1 second for debounce
+.LFEA7                    ;
+    JSR &FE71             ;    Scan keyboard
+    BCS LFEA7             ;    ..keep scanning until key pressed
+    JSR &FE71             ;    Scan keyboard again - still pressed ?
+    BCS LFEA7             ;    ..no, noise ? - try again
+    TYA                   ;    Acc = ASCII value of key - &20
+    LDX #&17              ;    Pointer to control code table at &FEE2
+                          ;
+                          ;               GET EXECUTION ADDRESS AND JUMP TO IT
+                          ;
+    JSR &FEC5             ;    Test for control code or otherwise
+    LDA LFEE3,X           ;    Get LSB execution Aaddress
+    STA &E2               ;    ..into w/s
+    LDA handler_hi_byte,X ;    Get MSB execution Address
+    STA &E3               ;    ..into w/s
+    TYA                   ;    Acc = ASCII value of key - &20
+    JMP (&E2)             ;    Jump to deal with char or control code
+
+;;  Handle Cursor Keys from Keyboard subroutine
+;;  -------------------------------------------
+
+;;- Sends the cursor control code to screen and then fetches another key.
+
+.LFDA2
+    AND #&5
+    ROL &B001
+    ROL A
+    JSR &FCEA              ; Send control character to screen
+    JSR update
+    JMP LFE9A              ; ..and fetch another key
+        
+.LFEE3
+
+    ;; oswrch handlers (unused)
+    EQUB &44, &5C, &38, &62, &87, &69, &40, &8D, &92, &7D, &50
+
+    ;; osrdch handlers (used!)
+    EQUB &DF, &D2, &9A, <LFDA2, &E2, &AE, &C0, &DF, &D8, &D6, &C8, &C6, &C2
+
+.handler_hi_byte
+    ;; oswrch handlers (unused)
+    EQUB &00, &00, &00, &00, &00, &00, &00, &00, &00, &00, &00
+
+    ;; osrdch handlers (used!)
+    EQUB &FD, &FD, &FD, >LFDA2, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD
+
+        
 .oswrch
+
+    PHA
+        
+    ;; optimise the common case of a non control character
+    CMP #&7F
+    BEQ slowpath
+    CMP #&20
+    BCC slowpath
+
+    ;; also bail if we are right at the end of the line
+    LDA &E0
+    CMP #&1F
+    BCS slowpath
+
+    ;; just update one character on the display
+    PLA
+        
+    PHA
+    STA LCD_DATA
+    JSR delay40
+    PLA
+
+    ;; finish by writing to the atom display
+    JMP WRCH
+        
+.slowpath
+    PLA
+        
     ;; call the old OSWRCH first
     JSR WRCH
 
@@ -228,10 +335,10 @@ org &A000 - 22
     RTS            ;; 6
                    ;; total is 42
 
-FOR n, P%, &AFFF
+FOR n, P%, ORIGIN + LEN - 1
     EQUB &FF
 NEXT
 
-SAVE "ATOMLCD.rom", &A000, &B000
+SAVE "ATOMLCD.rom", ORIGIN, ORIGIN + LEN
 
-SAVE "ATOMLCD", &9FEA, &B000
+SAVE "ATOMLCD", ORIGIN - 22, ORIGIN + LEN

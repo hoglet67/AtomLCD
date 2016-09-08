@@ -7,6 +7,9 @@ if [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
 fi
 
 # Assember the ROM
-$BEEBASM -i src/atomlcd.asm -v >& ATOMLCD.log
+$BEEBASM -i src/atomlcd.asm -v 2>&1 | tee ATOMLCD.log
+
+# Convert to srecords
+srec_cat ATOMLCD.rom -Binary -offset 0x2c00 -crlf -data-only > ATOMLCD.srec
 
 ls -l ATOMLCD*
