@@ -1,12 +1,10 @@
 ORIGIN        = $A000
 LEN           = $1000
         
-IRQ1V         = $0204
 WRCVEC        = &0208
 RDCVEC        = &020A
 
 WRCH          = &FE52
-
 
 LCD_CTRL      = &B404
 LCD_DATA      = &B405
@@ -14,13 +12,6 @@ LCD_DATA      = &B405
 VSYNC         = &FE66
 
 TMP           = &9E
-
-;;; VIA Addresses
-ViaBase       = $B800
-ViaT1CounterL = ViaBase + 4
-ViaT1CounterH = ViaBase + 5
-ViaACR        = ViaBase + 11
-ViaIER        = ViaBase + 14
 
 org ORIGIN - 22
 
@@ -30,13 +21,6 @@ org ORIGIN - 22
     EQUW ORIGIN
     EQUW LEN
 
-.init
-    ;; LINK #A000 to be interrupt driven
-    JMP init_via
-
-    ;; LINK #A003 to be vector driven
-
-.init_revector
     LDA #<oswrch
     STA WRCVEC
     LDA #>oswrch
@@ -45,25 +29,8 @@ org ORIGIN - 22
     STA RDCVEC
     LDA #>osrdch
     STA RDCVEC + 1
-    JSR reset_display
-    JMP update
-        
-.init_via
-    LDA #<via_isr           ; Setup the interrupt handler
-    STA IRQ1V
-    LDA #>via_isr
-    STA IRQ1V+1
-    LDA #<9999              ; 10ms timer interrupts
-    STA ViaT1CounterL
-    LDA #>9999
-    STA ViaT1CounterH
-    LDA #$40                ; Enable T1 continuous interrupts
-    STA ViaACR              ; Disable everything else
-    LDA #$7F                ; Disable all interrupts
-    STA ViaIER
-    LDA #$C0                ; Enable T1 interrupts
-    STA ViaIER
 
+    ;; reset display
 .reset_display
     LDX #(init_data_end - init_data - 1)
 .reset_loop
@@ -73,7 +40,7 @@ org ORIGIN - 22
     DEX
     BPL reset_loop
 
-    RTS
+    JMP update
 
 .init_data
     EQUB &01
@@ -82,51 +49,56 @@ org ORIGIN - 22
     EQUB &38
 .init_data_end
 
-.via_isr
-    LDA ViaT1CounterL       ; Clear the VIA interrupt flag
-    JSR update              ; refresh the LCD
-    PLA                     ; the Atom OS stacks A
-    RTI                     ; return from interrupt
-
-
-
 .osrdch
 
-    PHP                   ;    Save flags
-    CLD                   ;
-    STX &E4               ;    Save X register
-    STY &E5               ;    Save Y register
-                          ;
-                          ;                WAIT FOR KEYBOARD TO BE RELEASED
-                          ;
-.LFE9A                    ;
-    BIT &B002             ;    Is <REPT> key pressed ?
-    BVC LFEA4             ;    ..yes, no need to wait for keyboard to
-                          ;     be released
-    JSR &FE71             ;    Scan keyboard
-    BCC LFE9A             ;    ..wait for key to be released
-                          ;
-                          ;                GET KEYPRESS
-                          ;
-.LFEA4                    ;
-    JSR &FB8A             ;    Wait 0.1 second for debounce
-.LFEA7                    ;
-    JSR &FE71             ;    Scan keyboard
-    BCS LFEA7             ;    ..keep scanning until key pressed
-    JSR &FE71             ;    Scan keyboard again - still pressed ?
-    BCS LFEA7             ;    ..no, noise ? - try again
-    TYA                   ;    Acc = ASCII value of key - &20
-    LDX #&17              ;    Pointer to control code table at &FEE2
-                          ;
-                          ;               GET EXECUTION ADDRESS AND JUMP TO IT
-                          ;
-    JSR &FEC5             ;    Test for control code or otherwise
-    LDA LFEE3,X           ;    Get LSB execution Aaddress
-    STA &E2               ;    ..into w/s
-    LDA handler_hi_byte,X ;    Get MSB execution Address
-    STA &E3               ;    ..into w/s
-    TYA                   ;    Acc = ASCII value of key - &20
-    JMP (&E2)             ;    Jump to deal with char or control code
+    PHP                        ;    Save flags
+    CLD                        ;
+    STX &E4                    ;    Save X register
+    STY &E5                    ;    Save Y register
+                               ;
+                               ;                WAIT FOR KEYBOARD TO BE RELEASED
+                               ;
+.LFE9A                         ;
+    BIT &B002                  ;    Is <REPT> key pressed ?
+    BVC LFEA4                  ;    ..yes, no need to wait for keyboard to
+                               ;     be released
+    JSR &FE71                  ;    Scan keyboard
+    BCC LFE9A                  ;    ..wait for key to be released
+                               ;
+                               ;                GET KEYPRESS
+                               ;
+.LFEA4                         ;
+    JSR &FB8A                  ;    Wait 0.1 second for debounce
+.LFEA7                         ;
+    JSR &FE71                  ;    Scan keyboard
+    BCS LFEA7                  ;    ..keep scanning until key pressed
+    JSR &FE71                  ;    Scan keyboard again - still pressed ?
+    BCS LFEA7                  ;    ..no, noise ? - try again
+    TYA                        ;    Acc = ASCII value of key - &20
+    LDX #&17                   ;    Pointer to control code table at &FEE2
+                               ;
+                               ;               GET EXECUTION ADDRESS AND JUMP TO IT
+                               ;
+    JSR &FEC5                  ;    Test for control code or otherwise
+    LDA LFEE3 - 11,X           ;    Get LSB execution Address
+    STA &E2                    ;    ..into w/s
+    LDA handler_hi_byte - 11,X ;    Get MSB execution Address
+    STA &E3                    ;    ..into w/s
+    TYA                        ;    Acc = ASCII value of key - &20
+    JMP (&E2)                  ;    Jump to deal with char or control code
+
+;;  Handle <LOCK> subroutine
+;;  ------------------------
+;;
+;; - Toggles the lock flag - #E7 = #60 Lock on
+;;                           #E7 =   0 Lock off
+;; - Enter with Carry set.
+
+.LFD9A
+     LDA &E7                   ;  Get the lock flag
+     EOR #&60                  ;  ..toggle it
+     STA &E7                   ;  ..and restore it
+     BCS LFDAB                 ;  Go fetch another keypress
 
 ;;  Handle Cursor Keys from Keyboard subroutine
 ;;  -------------------------------------------
@@ -139,24 +111,21 @@ org ORIGIN - 22
     ROL A
     JSR &FCEA              ; Send control character to screen
     JSR update
+.LFDAB
     JMP LFE9A              ; ..and fetch another key
         
 .LFEE3
-
-    ;; oswrch handlers (unused)
-    EQUB &44, &5C, &38, &62, &87, &69, &40, &8D, &92, &7D, &50
-
-    ;; osrdch handlers (used!)
-    EQUB &DF, &D2, &9A, <LFDA2, &E2, &AE, &C0, &DF, &D8, &D6, &C8, &C6, &C2
+    ;; osrdch handlers (low bytes)
+    EQUB &DF, &D2, <LFD9A, <LFDA2, &E2, &AE, &C0, &DF, &D8, &D6, &C8, &C6, &C2
 
 .handler_hi_byte
-    ;; oswrch handlers (unused)
-    EQUB &00, &00, &00, &00, &00, &00, &00, &00, &00, &00, &00
-
-    ;; osrdch handlers (used!)
-    EQUB &FD, &FD, &FD, >LFDA2, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD
-
+    ;; osrdch handlers (high bytes)
+    EQUB &FD, &FD, >LFD9A, >LFDA2, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD, &FD
         
+;; ========================================================================
+;; OSWRCH
+;; ========================================================================
+
 .oswrch
 
     PHA
@@ -184,12 +153,17 @@ org ORIGIN - 22
     JMP WRCH
         
 .slowpath
-    PLA
-        
+    PLA        
+
     ;; call the old OSWRCH first
     JSR WRCH
 
-    ;; update the LCD
+    ;; fall through to update
+
+;; ========================================================================
+;; update the LCD
+;; ========================================================================
+
 .update
 
     ;; save everything
